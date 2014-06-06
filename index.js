@@ -1,7 +1,10 @@
 var WebSocketServer = require('websocket').server,
+    RedisDB         = require("redis"),
     http            = require('http'),
     sys             = require('sys'),
     path            = require('path'),
+    url             = require('url'),
+    sendRequest     = require('request'),
     fs              = require('fs');
 
 // Create normal server
@@ -10,9 +13,11 @@ var server = http.createServer(function(request, response) {
 
     var content = '',
         fileName = path.basename(request.url), //the file that was requested
-        localFolder = __dirname + '/view/';
+        localFolder = __dirname + '/view/',
+        urlInfo = url.parse(request.url,true);
 
-    if (fileName === 'index.html') {
+
+    if (urlInfo.pathname === '/index.html') {
         fullFileName = localFolder + fileName // setup the file name
         fs.readFile(fullFileName, function(err, content) {
             if (!err) {
@@ -20,16 +25,59 @@ var server = http.createServer(function(request, response) {
                 response.end(content);
             } else {
                 // Otherwise, let up inspect the error in the console
-                console.dir(err)
+                console.dir(err);
             }
         });
+    } else if (urlInfo.pathname === '/addDevice') {
+        if (request.method == 'GET') {
 
-    } else if (request.url === '/status') {
-        response.writeHead(200, {'Content-Type': 'application/json'});
-        var responseObject = {
-            status: "ok"
+            response.writeHead(200, {'Content-Type': 'application/json'});
+
+            var responseObject = {
+                status: 'fail'
+            };
+
+            // CURL get city by ip
+            options = {
+                uri:    "http://...?ip=" +urlInfo.query.ip,
+                method: "GET",
+            };
+            sendRequest(options, function (error, res, body) {
+                if (error) {
+                    console.log('Error: ' + error);
+                }
+                body = JSON.parse(body);
+                if (body.status === 0) {
+                    var redis = RedisDB.createClient();
+                    var value = {
+                        did: urlInfo.query.did,
+                        ip: urlInfo.query.ip,
+                        city: body.content.address,
+                        point: body.content.point
+                    };
+                    redis.set('point', value, function(error, result) {
+                        if (error) {
+                            console.log('Error: ' + error);
+                            response.end(JSON.stringify(responseObject));
+                        } else {
+                            console.log('Save into redis : ' + JSON.stringify(value));
+                            responseObject.status = 'ok';
+                            response.end(JSON.stringify(responseObject));
+                        }
+                    });
+                } else {
+                    console.log('status fail');
+                    response.end(JSON.stringify(responseObject));
+                }
+                console.log(body);
+            });
+
+            //redis.get('name', function (error, result) {
+            //    if (error) console.log('Error: ' + error);
+            //    else console.log('Name: ' + result);
+
+            //});
         }
-        response.end(JSON.stringify(responseObject));
     } else {
         response.writeHead(404, {'Content-Type': 'text/plain'});
         response.end('Sorry, unknown url');
@@ -64,4 +112,3 @@ wsServer.on('request', function(request) {
 
 server.listen(9090, function() { });
 sys.puts("Server Running on 9090");
-
